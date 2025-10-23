@@ -1,0 +1,74 @@
+name: screenshot-chart
+
+on:
+  workflow_dispatch:
+    inputs:
+      chart_url:
+        description: 'URL del chart (TradingView)'
+        required: true
+        type: string
+      filename:
+        description: 'Nombre de archivo (ej: sol_20251019_0650.png)'
+        required: true
+        type: string
+
+jobs:
+  capture:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: |
+          npm init -y
+          npm i puppeteer@latest
+
+      - name: Capture screenshot with Puppeteer
+        env:
+          CHART_URL: ${{ github.event.inputs.chart_url }}
+          FILENAME: ${{ github.event.inputs.filename }}
+        run: |
+          node -e "
+          const fs = require('fs');
+          const puppeteer = require('puppeteer');
+          (async () => {
+            const url = process.env.CHART_URL;
+            const name = process.env.FILENAME || 'chart.png';
+            const browser = await puppeteer.launch({ args:['--no-sandbox','--disable-setuid-sandbox']});
+            const page = await browser.newPage();
+            await page.setViewport({width:1200, height:800});
+            // ir al chart
+            await page.goto(url, {waitUntil: 'networkidle2', timeout: 60000});
+            // opcional: esperar un selector del chart, o 2s
+            try { await page.waitForTimeout(2000); } catch(e){}
+            // remover overlays molestos (ejemplo) -- adaptar selectores si hace falta
+            await page.evaluate(() => {
+              // ejemplo: esconder modal/toolbar (no garantizado para todos los usuarios)
+              const els = document.querySelectorAll('.tv-header, .js-top-block, .tv-dialog, .tv-notice');
+              els.forEach(e => e.style.display = 'none');
+            });
+            // screenshot central del contenedor del chart si existe el selector
+            const chart = await page.$('div.chart-container, .chart-container, .tv-chart'); // intentos
+            if (chart) {
+              await chart.screenshot({path: name, type: 'png'});
+            } else {
+              await page.screenshot({path: name, fullPage: false});
+            }
+            await browser.close();
+          })().catch(e => { console.error(e); process.exit(1); });
+          "
+
+      - name: Commit and push screenshot to gh-pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./
+          publish_branch: gh-pages
+          # subir sólo el archivo generado
+          # la acción hará commit; ajustá si querés otra estructura.
